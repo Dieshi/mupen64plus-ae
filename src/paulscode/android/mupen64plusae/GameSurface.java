@@ -41,8 +41,12 @@ public class GameSurface extends SurfaceView implements SurfaceHolder.Callback
     private boolean mIsRgba8888 = false;
     
     // Internal EGL objects
-    private EGLSurface mEGLSurface;
+    private EGLSurface mEGLSurface = EGL10.EGL_NO_SURFACE;
     private EGLDisplay mEGLDisplay;
+    private EGLContext  mEGLContext;
+    private EGLConfig   mEGLConfig;
+    
+    public boolean mIsSurfaceReady = false;
     
     public GameSurface( Context context, AttributeSet attribs )
     {
@@ -60,6 +64,9 @@ public class GameSurface extends SurfaceView implements SurfaceHolder.Callback
     public void surfaceCreated( SurfaceHolder holder )
     {
         Log.i( "GameSurface", "surfaceCreated: " );
+
+        // Set mIsSurfaceReady to 'true' *before* any call to resumeEmulator
+        mIsSurfaceReady = true;
     }
     
     @Override
@@ -67,14 +74,29 @@ public class GameSurface extends SurfaceView implements SurfaceHolder.Callback
     {
         Log.i( "GameSurface", "surfaceChanged: " );
         CoreInterface.onResize( format, width, height );
+
+        // Set mIsSurfaceReady to 'true' *before* making a call to resumeEmulator
+        mIsSurfaceReady = true;
         CoreInterface.startupEmulator();
     }
     
     @Override
-    public void surfaceDestroyed( SurfaceHolder holder )
+    public void surfaceDestroyed(SurfaceHolder holder) 
     {
-        Log.i( "GameSurface", "surfaceDestroyed: " );
-        CoreInterface.shutdownEmulator();
+        Log.v("GameSurface", "surfaceDestroyed()");
+        // Call this *before* setting mIsSurfaceReady to 'false'
+        CoreInterface.pauseEmulator(false);
+        mIsSurfaceReady = false;
+
+        /* We have to clear the current context and destroy the egl surface here
+         * Otherwise there's BAD_NATIVE_WINDOW errors coming from eglCreateWindowSurface on resume
+         * Ref: http://stackoverflow.com/questions/8762589/eglcreatewindowsurface-on-ics-and-switching-from-2d-to-3d
+         */
+        
+        EGL10 egl = (EGL10)EGLContext.getEGL();
+        egl.eglMakeCurrent(mEGLDisplay, EGL10.EGL_NO_SURFACE, EGL10.EGL_NO_SURFACE, EGL10.EGL_NO_CONTEXT);
+        egl.eglDestroySurface(mEGLDisplay, mEGLSurface);
+        mEGLSurface = EGL10.EGL_NO_SURFACE;
     }
     
     public boolean createGLContext( int majorVersion, int minorVersion )
@@ -135,106 +157,152 @@ public class GameSurface extends SurfaceView implements SurfaceHolder.Callback
     
     public boolean createGLContext( int majorVersion, int minorVersion, int[] configSpec )
     {
-        Log.v( "GameSurface", "Starting up OpenGL ES " + majorVersion + "." + minorVersion );
+
         try
         {
-            // Get EGL instance
-            EGL10 egl = (EGL10) EGLContext.getEGL();
-            
-            // Get an EGL display connection for the native display
-            EGLDisplay display = egl.eglGetDisplay( EGL10.EGL_DEFAULT_DISPLAY );
-            if( display == EGL10.EGL_NO_DISPLAY )
+            if (mEGLDisplay == null) 
             {
-                Log.e( "GameSurface", "Couldn't find EGL display connection" );
-                return false;
-            }
-            
-            // Initialize the EGL display connection and obtain the GLES version supported by the device
-            final int[] version = new int[2];
-            if( !egl.eglInitialize( display, version ) )
-            {
-                Log.e( "GameSurface", "Couldn't initialize EGL display connection" );
-                return false;
-            }
-            
-            // Get the number of frame buffer configurations that are compatible with the display and specification
-            final int[] num_config_out = new int[1];
-            egl.eglChooseConfig( display, configSpec, null, 0, num_config_out );
-            final int num_config = num_config_out[0];
-            
-            // Get the compatible EGL frame buffer configurations
-            final EGLConfig[] configs = new EGLConfig[num_config];
-            boolean success = egl.eglChooseConfig( display, configSpec, configs, num_config, null );
-            int bestConfig = -1;
-            for( int i = 0; i < num_config; i++ )
-            {
-                Log.i( "GameSurface", "Config[" + i + "]:"
-                        + configAttribString( egl, display, configs[i], " BS", EGL10.EGL_BUFFER_SIZE )
-                        + configAttribString( egl, display, configs[i], " R", EGL10.EGL_RED_SIZE )
-                        + configAttribString( egl, display, configs[i], " G", EGL10.EGL_GREEN_SIZE )
-                        + configAttribString( egl, display, configs[i], " B", EGL10.EGL_BLUE_SIZE )
-                        + configAttribString( egl, display, configs[i], " A", EGL10.EGL_ALPHA_SIZE )
-                        + configAttribString( egl, display, configs[i], " D", EGL10.EGL_DEPTH_SIZE )
-                        + configAttribString( egl, display, configs[i], " S", EGL10.EGL_STENCIL_SIZE )
-                        + configAttribString( egl, display, configs[i], " AM", EGL10.EGL_ALPHA_MASK_SIZE )
-                        + configAttribString( egl, display, configs[i], " CC", EGL10.EGL_CONFIG_CAVEAT )
-                        + configAttribString( egl, display, configs[i], " RT", EGL10.EGL_RENDERABLE_TYPE )
-                        + configAttribString( egl, display, configs[i], " NR", EGL10.EGL_NATIVE_RENDERABLE )
-                        + configAttribString( egl, display, configs[i], " NVT", EGL10.EGL_NATIVE_VISUAL_TYPE )
-                        + configAttribString( egl, display, configs[i], " SB", EGL10.EGL_SAMPLE_BUFFERS )
-                        + configAttribString( egl, display, configs[i], " Sa", EGL10.EGL_SAMPLES )
-                        + configAttribString( egl, display, configs[i], " ST", EGL10.EGL_SURFACE_TYPE )
-                        );
-                if( bestConfig < 0 )
+                Log.v( "GameSurface", "Starting up OpenGL ES " + majorVersion + "." + minorVersion );
+                // Get EGL instance
+                EGL10 egl = (EGL10) EGLContext.getEGL();
+                
+                // Get an EGL display connection for the native display
+                EGLDisplay display = egl.eglGetDisplay( EGL10.EGL_DEFAULT_DISPLAY );
+                if( display == EGL10.EGL_NO_DISPLAY )
                 {
-                    // "Best" config is the first one that is fast and egl-conformant (i.e. not slow, not non-conformant)
-                    int caveatValue = configAttrib( egl, display, configs[i], EGL10.EGL_CONFIG_CAVEAT );
-                    if( caveatValue == EGL10.EGL_NONE )
+                    Log.e( "GameSurface", "Couldn't find EGL display connection" );
+                    return false;
+                }
+                
+                // Initialize the EGL display connection and obtain the GLES version supported by the device
+                final int[] version = new int[2];
+                if( !egl.eglInitialize( display, version ) )
+                {
+                    Log.e( "GameSurface", "Couldn't initialize EGL display connection" );
+                    return false;
+                }
+                
+                // Get the number of frame buffer configurations that are compatible with the display and specification
+                final int[] num_config_out = new int[1];
+                egl.eglChooseConfig( display, configSpec, null, 0, num_config_out );
+                final int num_config = num_config_out[0];
+                
+                // Get the compatible EGL frame buffer configurations
+                final EGLConfig[] configs = new EGLConfig[num_config];
+                boolean success = egl.eglChooseConfig( display, configSpec, configs, num_config, null );
+                int bestConfig = -1;
+                for( int i = 0; i < num_config; i++ )
+                {
+                    Log.i( "GameSurface", "Config[" + i + "]:"
+                            + configAttribString( egl, display, configs[i], " BS", EGL10.EGL_BUFFER_SIZE )
+                            + configAttribString( egl, display, configs[i], " R", EGL10.EGL_RED_SIZE )
+                            + configAttribString( egl, display, configs[i], " G", EGL10.EGL_GREEN_SIZE )
+                            + configAttribString( egl, display, configs[i], " B", EGL10.EGL_BLUE_SIZE )
+                            + configAttribString( egl, display, configs[i], " A", EGL10.EGL_ALPHA_SIZE )
+                            + configAttribString( egl, display, configs[i], " D", EGL10.EGL_DEPTH_SIZE )
+                            + configAttribString( egl, display, configs[i], " S", EGL10.EGL_STENCIL_SIZE )
+                            + configAttribString( egl, display, configs[i], " AM", EGL10.EGL_ALPHA_MASK_SIZE )
+                            + configAttribString( egl, display, configs[i], " CC", EGL10.EGL_CONFIG_CAVEAT )
+                            + configAttribString( egl, display, configs[i], " RT", EGL10.EGL_RENDERABLE_TYPE )
+                            + configAttribString( egl, display, configs[i], " NR", EGL10.EGL_NATIVE_RENDERABLE )
+                            + configAttribString( egl, display, configs[i], " NVT", EGL10.EGL_NATIVE_VISUAL_TYPE )
+                            + configAttribString( egl, display, configs[i], " SB", EGL10.EGL_SAMPLE_BUFFERS )
+                            + configAttribString( egl, display, configs[i], " Sa", EGL10.EGL_SAMPLES )
+                            + configAttribString( egl, display, configs[i], " ST", EGL10.EGL_SURFACE_TYPE )
+                            );
+                    if( bestConfig < 0 )
                     {
-                        bestConfig = i;
+                        // "Best" config is the first one that is fast and egl-conformant (i.e. not slow, not non-conformant)
+                        int caveatValue = configAttrib( egl, display, configs[i], EGL10.EGL_CONFIG_CAVEAT );
+                        if( caveatValue == EGL10.EGL_NONE )
+                        {
+                            bestConfig = i;
+                        }
                     }
                 }
+                if( !success || num_config == 0 )
+                {
+                    Log.e( "GameSurface", "Couldn't find compatible EGL frame buffer configuration" );
+                    return false;
+                }
+                
+                // Select the best configuration
+                Log.i( "GameSurface", "Using Config[" + bestConfig + "]" );
+                EGLConfig config = configs[bestConfig];
+                
+                // Store the EGL objects to permit frame buffer swaps later
+                mEGLDisplay = display;
+                mEGLConfig = config;
             }
-            if( !success || num_config == 0 )
-            {
-                Log.e( "GameSurface", "Couldn't find compatible EGL frame buffer configuration" );
-                return false;
-            }
-            
-            // Select the best configuration
-            Log.i( "GameSurface", "Using Config[" + bestConfig + "]" );
-            EGLConfig config = configs[bestConfig];
             
             // Create an EGL rendering context and ensure that it supports the requested GLES version, display
             // connection, and frame buffer configuration (http://stackoverflow.com/a/5930935/254218)
-            final int EGL_CONTEXT_CLIENT_VERSION = 0x3098;
-            final int[] contextAttrs = new int[] { EGL_CONTEXT_CLIENT_VERSION, majorVersion, EGL10.EGL_NONE };
-            EGLContext context = egl.eglCreateContext( display, config, EGL10.EGL_NO_CONTEXT, contextAttrs );
-            if( context.equals( EGL10.EGL_NO_CONTEXT ) )
+            if (mEGLDisplay != null && mEGLConfig != null) 
             {
-                Log.e( "GameSurface", "Couldn't create EGL rendering context" );
+                EGL10 egl = (EGL10)EGLContext.getEGL();
+                
+                if (mEGLContext == null)
+                {
+                    final int EGL_CONTEXT_CLIENT_VERSION = 0x3098;
+                    final int[] contextAttrs = new int[] { EGL_CONTEXT_CLIENT_VERSION, majorVersion, EGL10.EGL_NONE };
+                    mEGLContext = egl.eglCreateContext( mEGLDisplay, mEGLConfig, EGL10.EGL_NO_CONTEXT, contextAttrs );
+                    if( mEGLSurface == EGL10.EGL_NO_SURFACE )
+                    {
+                        Log.e( "GameSurface", "Couldn't create EGL rendering context" );
+                        return false;
+                    }
+                }
+                    
+                if (mEGLSurface == EGL10.EGL_NO_SURFACE)
+                {
+                    // Create an EGL window surface from the generated EGL display and configuration
+                    Log.v("GameSurface", "Creating new EGL Surface");
+                    mEGLSurface = egl.eglCreateWindowSurface( mEGLDisplay, mEGLConfig, this, null );
+                    if( mEGLSurface == EGL10.EGL_NO_SURFACE )
+                    {
+                        Log.e( "GameSurface", "Couldn't create EGL window surface" );
+                        return false;
+                    }
+                }
+                else 
+                    Log.v("GameSurface", "EGL Surface remains valid");
+                
+                if (egl.eglGetCurrentContext() != mEGLContext) 
+                {
+                    // Bind the EGL rendering context to the window surface and current rendering thread
+                    if( !egl.eglMakeCurrent( mEGLDisplay, mEGLSurface, mEGLSurface, mEGLContext ) )
+                    {
+                        Log.e("GameSurface", "Old EGL Context doesnt work, trying with a new one");
+                        
+                        // Re-create an EGL rendering context
+                        final int EGL_CONTEXT_CLIENT_VERSION = 0x3098;
+                        final int[] contextAttrs = new int[] { EGL_CONTEXT_CLIENT_VERSION, majorVersion, EGL10.EGL_NONE };
+                        mEGLContext = egl.eglCreateContext( mEGLDisplay, mEGLConfig, EGL10.EGL_NO_CONTEXT, contextAttrs );
+                        if( mEGLSurface == EGL10.EGL_NO_SURFACE )
+                        {
+                            Log.e( "GameSurface", "Couldn't create EGL rendering context" );
+                            return false;
+                        }
+                        
+                        if (!egl.eglMakeCurrent(mEGLDisplay, mEGLSurface, mEGLSurface, mEGLContext)) 
+                        {
+                            Log.e("GameSurface", "Failed making EGL Context current");
+                            return false;
+                        }
+                    }
+                    else 
+                        Log.v("GameSurface", "EGL Context made current");
+                }
+                else 
+                    Log.v("GameSurface", "EGL Context remains current");
+                
+                return true;
+            }
+            else 
+            {
+                Log.e("GameSurface", "Surface creation failed, display = " + mEGLDisplay + ", config = " + mEGLConfig);
                 return false;
             }
-            
-            // Create an EGL window surface from the generated EGL display and configuration
-            EGLSurface surface = egl.eglCreateWindowSurface( display, config, this, null );
-            if( surface.equals( EGL10.EGL_NO_SURFACE ) )
-            {
-                Log.e( "GameSurface", "Couldn't create EGL window surface" );
-                return false;
-            }
-            
-            // Bind the EGL rendering context to the window surface and current rendering thread
-            if( !egl.eglMakeCurrent( display, surface, surface, context ) )
-            {
-                Log.e( "GameSurface", "Couldn't bind EGL rendering context to surface" );
-                return false;
-            }
-            
-            // Store the EGL objects to permit frame buffer swaps later
-            mEGLDisplay = display;
-            mEGLSurface = surface;
-            return true;
         }
         catch( IllegalArgumentException e )
         {

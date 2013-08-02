@@ -138,14 +138,18 @@ extern "C" DECLSPEC void Java_paulscode_android_mupen64plusae_CoreInterfaceNativ
     (*CoreDoCommand)(M64CMD_CORE_STATE_SET, M64CORE_INPUT_GAMESHARK, &p);
 }
 
-extern "C" DECLSPEC void Java_paulscode_android_mupen64plusae_CoreInterfaceNative_emuPause(JNIEnv* env, jclass cls)
+extern "C" DECLSPEC void SDLCALL Java_org_libsdl_app_SDLActivity_nativePause(JNIEnv* env, jclass cls);
+extern "C" DECLSPEC void SDLCALL Java_paulscode_android_mupen64plusae_CoreInterfaceNative_emuPause(JNIEnv* env, jclass cls)
 {
     (*CoreDoCommand)(M64CMD_PAUSE, 0, NULL);
+    Java_org_libsdl_app_SDLActivity_nativePause(env, cls);
 }
 
-extern "C" DECLSPEC void Java_paulscode_android_mupen64plusae_CoreInterfaceNative_emuResume(JNIEnv* env, jclass cls)
+extern "C" DECLSPEC void SDLCALL Java_org_libsdl_app_SDLActivity_nativeResume(JNIEnv* env, jclass cls);
+extern "C" DECLSPEC void SDLCALL Java_paulscode_android_mupen64plusae_CoreInterfaceNative_emuResume(JNIEnv* env, jclass cls)
 {
     (*CoreDoCommand)(M64CMD_RESUME, 0, NULL);
+    Java_org_libsdl_app_SDLActivity_nativeResume(env, cls);
 }
 
 extern "C" DECLSPEC void Java_paulscode_android_mupen64plusae_CoreInterfaceNative_emuStop(JNIEnv* env, jclass cls)

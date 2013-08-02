@@ -222,6 +222,8 @@ public class CoreInterface
             
             resumeEmulator();
         }
+		else
+			resumeEmulator();
     }
     
     public static void shutdownEmulator()
@@ -252,7 +254,7 @@ public class CoreInterface
     
     public static void resumeEmulator()
     {
-        if( sCoreThread != null )
+        if( sCoreThread != null && sSurface.mIsSurfaceReady)
         {
             CoreInterfaceNative.emuResume();
         }
@@ -260,7 +262,7 @@ public class CoreInterface
     
     public static void pauseEmulator( boolean autoSave )
     {
-        if( sCoreThread != null )
+        if( sCoreThread != null && sSurface.mIsSurfaceReady)
         {
             CoreInterfaceNative.emuPause();
             
